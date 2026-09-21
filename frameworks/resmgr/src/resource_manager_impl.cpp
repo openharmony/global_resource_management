@@ -17,7 +17,9 @@
 
 #include <cmath>
 #include <cstdarg>
+#include <charconv>
 #include <cstdlib>
+#include <system_error>
 #include <cstring>
 #include <fcntl.h>
 #include <regex>
@@ -50,6 +52,31 @@ LogLevel g_logLevel = LOG_INFO;
 #endif
 
 constexpr int HEX_ADECIMAL = 16;
+
+// Parse HAP symbol hex (strtol leftover). Keep outValue on junk/overflow.
+static bool ParseSymbolU32(const std::string &str, uint32_t &outValue)
+{
+    if (str.empty()) {
+        return false;
+    }
+    const char *begin = str.data();
+    const char *end = begin + str.size();
+    // strtol(base 16) accepts an optional 0x/0X prefix
+    if (str.size() > 1 && begin[0] == '0' && (begin[1] == 'x' || begin[1] == 'X')) {
+        begin += 2;
+        if (begin == end) {
+            return false;
+        }
+    }
+    uint32_t value = 0;
+    auto result = std::from_chars(begin, end, value, HEX_ADECIMAL);
+    if (result.ec != std::errc() || result.ptr != end) {
+        return false;
+    }
+    outValue = value;
+    return true;
+}
+
 const std::string FOREGROUND = "foreground";
 const std::string BACKGROUND = "background";
 const std::regex FLOAT_REGEX = std::regex("(\\+|-)?\\d+(\\.\\d+)? *(px|vp|fp)?");
@@ -1121,10 +1148,13 @@ RState ResourceManagerImpl::GetSymbol(const std::shared_ptr<IdItem> idItem, uint
     }
     std::string temp;
     RState state = ResolveReference(idItem->value_, temp);
-    if (state == SUCCESS) {
-        outValue = static_cast<uint32_t>(strtol(temp.c_str(), nullptr, HEX_ADECIMAL));
+    if (state != SUCCESS) {
+        return state;
     }
-    return state;
+    if (!ParseSymbolU32(temp, outValue)) {
+        return ERROR;
+    }
+    return SUCCESS;
 }
 
 RState ResourceManagerImpl::GetIntArrayById(uint32_t id, std::vector<int> &outValue)
